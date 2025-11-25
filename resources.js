@@ -1,4 +1,4 @@
-const { RisqTable } = tables;
+const { RisqTable } = databases.risq;
 
 class Risq extends RisqTable {
     put(payload) {
