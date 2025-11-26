@@ -1,5 +1,5 @@
-# 1hr TTL
-type RisqTable @table(database: "risq", expiration: 3600) @export {
+# 1hr TTL expiration: 3600. 7days TTL expiration: 604800
+type RisqTable @table(database: "risq", expiration: 604800) @export {
    correlationId: ID @primaryKey 
    deviceId: String
    decision: String
