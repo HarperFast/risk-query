@@ -1,0 +1,200 @@
+# v5 Test Report
+
+**Date:** March 26, 2026
+**Harper Version:** 5.0.0-beta.5
+**Environment:** 4-node Colocated Medium cluster on Linode (dev Fabric)
+
+## Cluster
+
+| Node | Ops API | HTTP API |
+|------|---------|----------|
+| us-central-1 | https://us-central-1.v5.lavinia.dev.harperfabric.com:9925 | :9926 |
+| us-lax-1 | https://us-lax-1.v5.lavinia.dev.harperfabric.com:9925 | :9926 |
+| us-mia-1 | https://us-mia-1.v5.lavinia.dev.harperfabric.com:9925 | :9926 |
+| us-ord-1 | https://us-ord-1.v5.lavinia.dev.harperfabric.com:9925 | :9926 |
+
+## Deployment
+
+Deployed via CLI with replicated flag. All 4 nodes confirmed.
+
+```
+harperdb deploy project=risk-query target=https://us-central-1.v5.lavinia.dev.harperfabric.com:9925 \
+  username='lavinia@harperdb.io' password="..." restart=true replicated=true
+
+message: "Successfully deployed: risk-query, restarting Harper"
+replicated:
+  - node: 240-us-ord-1 - Successfully deployed
+  - node: 7fg-us-lax-1 - Successfully deployed
+  - node: a33-us-mia-1 - Successfully deployed
+```
+
+## Test Results Summary
+
+| Test | Result |
+|------|--------|
+| PUT /risq with shorthand fields | PASS |
+| GET /risq by correlationId | PASS |
+| Shorthand field mapping (di→deviceId, d→decision, r→riskScore) | PASS |
+| GET /RisqTable by ID | PASS |
+| GET /RisqTable/ (list all records) | PASS |
+| Replication: insert on each node, read from all others | PASS |
+| Upsert (update existing record) | PASS |
+| Upsert replication | PASS |
+| Edge case: missing fields | PASS |
+| Edge case: empty body | PASS |
+| Edge case: GET nonexistent record | PASS (returns null) |
+| Edge case: no auth | PASS (returns 401) |
+| DELETE record | PASS |
+| DELETE replication | PASS |
+| TTL eviction | PASS |
+| Functional test: kv_lookup_upsert.js (100 records) | PASS |
+| Functional test: kv_lookup_get.js (100 records, all 4 nodes) | PASS |
+| Performance test: perf_kv_lookup_upsert.js (k6) | PASS (100%) |
+| Performance test: perf_kv_lookup_get.js (k6) | PASS (100%) |
+
+
+## Manual Tests
+
+### 1. Insert and Replication
+
+Inserted a record on each node via `PUT /risq/{id}`, verified the response on the originating node, then confirmed replication to all 3 remaining nodes. All 4 directions passed: central→all, lax→all, mia→all, ord→all.
+
+Example (central-1):
+```
+PUT /risq/test-001  {"di": "abc123", "d": "allow", "r": 60}  → 204
+GET /risq/test-001  → {"deviceId":"abc123","decision":"allow","riskScore":60,"correlationId":"test-001"}
+Replicated to lax-1, mia-1, ord-1 - confirmed identical response on all.
+```
+
+### 2. GET via /RisqTable
+
+Retrieved individual records and full record listing via the direct REST endpoint on all 4 nodes. All returned consistent data.
+
+```
+GET /RisqTable/test-001 → {"deviceId":"abc123","decision":"allow","riskScore":60,"correlationId":"test-001"}
+GET /RisqTable/         → [4 records, identical across all nodes]
+```
+
+### 3. Upsert and Replication
+
+Updated existing records on each node with new values, verified the update locally, then confirmed it replicated to all other nodes.
+
+Example (central-1):
+```
+PUT /risq/test-001  {"di": "updated-device", "d": "deny", "r": 99}  → 204
+GET /risq/test-001  → {"deviceId":"updated-device","decision":"deny","riskScore":99,"correlationId":"test-001"}
+Replicated to lax-1, mia-1, ord-1 - all updated.
+```
+
+Repeated for lax-1, mia-1, ord-1 - all passed.
+
+### 4. Edge Cases
+
+**Missing fields** - PUT with only `di`, omitting `d` and `r`:
+```
+PUT /risq/edge-missing  {"di": "only-device"}  → 204
+GET → {"deviceId":"only-device","correlationId":"edge-missing"}
+```
+Missing fields are omitted from the response, not null. Replicated to all nodes.
+
+**Empty body** - PUT with `{}`:
+```
+PUT /risq/edge-empty  {}  → 204
+GET → {"correlationId":"edge-empty"}
+```
+Only the correlationId (from the URL path) is stored. Replicated to all nodes.
+
+**Nonexistent record:**
+```
+GET /risq/does-not-exist → null
+```
+
+**No auth:**
+```
+GET /risq/test-001 (no Authorization header)
+→ {"type":"error:AccessViolation","code":"AccessViolation","title":"Must login","status":401}
+```
+
+### 5. Delete and Replication
+
+Confirmed record existed on all 4 nodes, deleted from central-1, verified null on all 4.
+
+```
+DELETE /risq/edge-empty → true
+GET on central-1 → null
+GET on lax-1, mia-1, ord-1 → null
+```
+
+### 6. TTL Eviction
+
+Temporarily set table expiration to 180s (3 minutes) via schema change and redeployment.
+
+| Step | Time | Action | Result |
+|------|------|--------|--------|
+| 1 | 04:34:46 | Check record count | 104 records, expiration: 180s |
+| 2 | 04:34:56 | Insert ttl-test-2 | 204 |
+| 3 | 04:37:45 | Verify exists, check count | Record present, 105 records |
+| 4 | 04:39:43 | Check after TTL | null - evicted. 104 records |
+
+Record evicted 3 minutes after insert. Record count returned to 104.
+
+## Automated Tests - Functional
+
+### kv_lookup_upsert.js
+
+Inserted 100 records sequentially via `PUT /risq/{0-99}` with random deviceId, decision, and riskScore. Targeted us-lax-1.
+
+```
+Result: Upsert 100 records: complete (0 errors)
+```
+
+### kv_lookup_get.js
+
+Retrieved 100 records via `GET /risq/{0-99}`. Run against each node individually to verify replication.
+
+| Node | Result |
+|------|--------|
+| us-lax-1 (origin) | 100/100 - complete |
+| us-central-1 | 100/100 - complete |
+| us-mia-1 | 100/100 - complete |
+| us-ord-1 | 100/100 - complete |
+
+
+## Automated Tests - Performance (k6)
+
+Load profile: ramp to 10 RPS over 1s, hold at 10 RPS for 10s. Requests distributed randomly across all 4 cluster nodes.
+
+### perf_kv_lookup_upsert.js
+
+| Metric | avg | min | p50 | p90 | p95 | p99 | max |
+|--------|-----|-----|-----|-----|-----|-----|-----|
+| HDB internal | 1.45ms | 830µs | 1.22ms | 2.04ms | 2.49ms | 3.98ms | 5.63ms |
+| Full request | 163.61ms | 125.84ms | 161.72ms | 197.21ms | 202.16ms | 203.96ms | 205.02ms |
+
+- 104 requests, 0 failures (100% pass)
+- 9.35 RPS achieved
+
+### perf_kv_lookup_get.js
+
+| Metric | avg | min | p50 | p90 | p95 | p99 | max |
+|--------|-----|-----|-----|-----|-----|-----|-----|
+| HDB internal | 888µs | 430µs | 850µs | 1.2ms | 1.3ms | 2.31ms | 2.37ms |
+| Full request | 206.29ms | 123.59ms | 164.72ms | 213.53ms | 271.95ms | 1.54s | 1.63s |
+
+- 104 requests, 0 failures 
+- 8.49 RPS achieved
+
+## Bugs Found During Testing
+
+### 1. dropDatabase closes store before emitting events (Fixed)
+
+**Stack trace:**
+```
+Error: Database not open
+    at Store.getRange (rocksdb-js/src/store.ts:443:10)
+    at RocksDatabase.getRange (rocksdb-js/src/dbi.ts:309:21)
+    at NodeReplicationConnection.sendSubscriptionRequestUpdate (replicationConnection.ts:1873:63)
+    at dropDatabase (databases.ts:771:24)
+```
+
+Fix PR: https://github.com/HarperFast/harper/pull/278
