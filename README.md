@@ -35,9 +35,9 @@ Login/App ───────────────────────�
 
 ## Local Quickstart
 
-1. `git clone https://github.com/HarperDB/risk-query.git`
+1. `git clone https://github.com/HarperFast/risk-query.git`
 1. `cd risk-query`
-1. `harperdb run .`
+1. `harper run .`
 
 This assumes you have the Harper stack already installed. [Install Harper](https://docs.harperdb.io/docs/deployments/install-harperdb) globally.
 
