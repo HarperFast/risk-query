@@ -121,12 +121,7 @@ void suite('risk-query (risq)', (ctx: ContextWithHarper) => {
     void test('GET /risq/:id returns 404 for nonexistent record', async () => {
         const res = await authFetch(ctx, '/risq/does-not-exist-xyz');
         // Harper returns 404 for a missing key
-        ok([404, 200].includes(res.status), `expected 404 or null body, got ${res.status}`);
-        if (res.status === 200) {
-            const body = await res.text();
-            // Harper may return "null" body for missing records
-            ok(body === 'null' || body === '', `expected null body, got: ${body}`);
-        }
+        strictEqual(res.status, 404, `expected 404, got ${res.status}`);
     });
 
     // Note: the integration-testing harness starts Harper in a mode that
@@ -141,7 +136,7 @@ void suite('risk-query (risq)', (ctx: ContextWithHarper) => {
 
         const res = await fetch(`${ctx.harper.httpURL}/risq/${id}`);
         // Harness auth is open; record should be retrievable (200) or redirect (3xx).
-        ok([200, 301, 302, 401].includes(res.status), `unexpected status ${res.status}`);
+        ok([200, 301, 302].includes(res.status), `unexpected status ${res.status}`);
     });
 
     void test('PUT /risq/:id handles missing optional fields', async () => {

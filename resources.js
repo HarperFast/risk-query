@@ -2,7 +2,7 @@ const { RisqTable } = databases.risq;
 
 class Risq extends RisqTable {
     put(payload) {
-        super.put({
+        return super.put({
             deviceId: payload.di,
             decision: payload.d,
             riskScore: payload.r,
